@@ -1,0 +1,11 @@
+{
+  "users": {
+    "primary": "server1",
+    "replicas": ["server1", "server2"]
+  },
+  "hotel_packages": {
+    "primary": "server3",
+    "replicas": ["server1", "server3"]
+  }
+
+}
