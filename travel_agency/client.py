@@ -47,37 +47,6 @@ class Client:
                 time.sleep(self.retry_delay)
         print("Failed to connect to the Master Server after all attempts.")
 
-    # def request_file(self, file_name):
-    #     try:
-    #         # Step 1: Construct a read request in JSON format
-    #         request = json.dumps({"type": "read", "file_name": file_name})
-            
-    #         # Step 2: Send the read request to the Master Server
-    #         self.client_socket.sendall(request.encode())
-    #         print(f"Sent read request for file '{file_name}' to Master Server")
-
-    #         # Step 3: Receive the chunk server address from the Master Server
-    #         chunk_server_response = self.client_socket.recv(4096).decode().strip()
-            
-    #         # Check if the response is an error message
-    #         if "Error" in chunk_server_response:
-    #             print(f"Error from Master Server: {chunk_server_response}")
-    #             return
-            
-    #         # Step 4: Parse the chunk server address
-    #         chunk_server_address = chunk_server_response
-    #         print(f"Received chunk server address from Master Server: {chunk_server_address}")
-
-    #         # Ensure the chunk server address format is correct ('host:port')
-    #         if ':' not in chunk_server_address:
-    #             print(f"Invalid chunk server address format: {chunk_server_address}")
-    #             return
-
-    #         # Step 5: Retrieve the file from the specified chunk server
-    #         self.retrieve_file_from_chunk_server(file_name, chunk_server_address)
-
-    #     except socket.error as e:
-    #         print(f"Error sending request to Master Server: {e}")
 
     def request_table(self, table_name):
         try:
@@ -112,33 +81,8 @@ class Client:
             print(f"An error occurred while requesting the file: {e}")
             return None  # Return None in case of any exception
 
-    # def retrieve_file_from_chunk_server(self, file_name, chunk_server_address):
-    #     try:
-    #         # Split the chunk server address into host and port
-    #         host, port = chunk_server_address.split(':')
-    #         chunk_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    #         chunk_socket.connect((host, int(port)))
 
-    #         # Step 5: Send the file request to the Chunk Server
-    #         request = json.dumps({"type": "read", "file_name": file_name})
-    #         chunk_socket.sendall(request.encode())
-    #         print(f"Requested file '{file_name}' from Chunk Server at {chunk_server_address}")
-
-    #         # Step 6: Receive the file data from the Chunk Server
-    #         with open(self.temp_file_path, 'wb') as temp_file:  # Open the file in binary mode
-    #             while True:
-    #                 file_data = chunk_socket.recv(4096)  # Receive file in chunks of 4096 bytes
-    #                 if not file_data:
-    #                     print("No more data received from the Chunk Server.")
-    #                     break  # End of file transfer
-    #                 temp_file.write(file_data)  # Write received binary data to the temp file
-    #             print(f"File successfully written to {self.temp_file_path}")
-
-    #         chunk_socket.close()
-
-    #     except socket.error as e:
-    #         print(f"Error retrieving file from Chunk Server: {e}")
-
+    #reads data from table
     def retrieve_table_from_chunk_server(self, table_name, chunk_server_address, email):
         try:
             # Split the chunk server address into host and port
@@ -171,6 +115,8 @@ class Client:
             print(f"Error retrieving file from Chunk Server: {e}")
             return None  # Return None in case of error
 
+
+    #writes file to table
     def write_file(self, file_name, data):
             attempt = 0
             while attempt < self.retry_attempts:
@@ -192,7 +138,7 @@ class Client:
                         primary_socket.connect((primary_address, primary_port))
                         write_data = {
                             "type": "write",
-                            "file_name": file_name,
+                            "table_name": file_name,
                             "data": data,
                             "server": "primary"
                         }

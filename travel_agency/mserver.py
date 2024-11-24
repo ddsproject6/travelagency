@@ -3,49 +3,53 @@ import threading
 import json
 import time
 
+
 class MasterServer:
     def __init__(self, config_file='mserver_config.json'):
         self.master_address = None
         self.master_port = None
-        self.chunk_servers = []  # List to hold chunk server information
-        self.server_loads = {}  # Track server loads
-        self.server_status = {}  # Track server health status
-        self.file_chunk_mapping = {}  # Map files to primary chunk servers
+        self.chunk_servers = []  # List of chunk servers
+        self.server_loads = {}  # Dictionary to store server loads
+        self.server_status = {}  # Dictionary to track server health
+        self.file_chunk_mapping = {}  # Mapping files to chunk servers
+        self.start_health_check()
+
         self.load_config(config_file)
-        self.init_server()
-        self.start_health_check()  # Start the health check thread
+        self.start_server()
+
 
     def load_config(self, config_file):
+        """Load configuration from a JSON file."""
         try:
             with open(config_file, 'r') as file:
                 config = json.load(file)
             self.master_address = config['master_server']['address']
             self.master_port = config['master_server']['port']
-            self.chunk_servers = config['chunk_servers']  # Load chunk servers as a list
+            self.chunk_servers = config['chunk_servers']
 
-            # Initialize load and status for each server
+            # Initialize server loads and status
             for server in self.chunk_servers:
-                server_key = server['name']  # Unique identifier for the server
-                self.server_loads[server_key] = 0  # Initialize load for each server
-                self.server_status[server_key] = True  # Initially mark servers as healthy
-            
+                server_key = server['name']
+                self.server_loads[server_key] = 0  # Initial load is zero
+                self.server_status[server_key] = True  # Assume servers are healthy at start
+
             print(f"Configuration loaded from {config_file}")
 
-            # Load file-to-primary mappings from the file metadata
+            # Load existing file-to-chunk-server mappings
             self.load_file_chunk_mapping()
         except (FileNotFoundError, json.JSONDecodeError, ValueError) as e:
-            print(f"Error loading config file: {e}")
+            print(f"Error loading configuration: {e}")
             raise
 
     def load_file_chunk_mapping(self):
+        """Load file-to-primary mappings from a metadata file."""
         try:
             with open("files_metadata.json", "r") as f:
                 files_metadata = json.load(f)
-            
+
             for file_name, file_info in files_metadata.items():
                 primary = file_info.get("primary")
                 if primary:
-                    # Map file to primary server address
                     primary_server = next(
                         (server for server in self.chunk_servers if server["name"] == primary),
                         None
@@ -56,7 +60,8 @@ class MasterServer:
         except (FileNotFoundError, json.JSONDecodeError) as e:
             print(f"Error loading file metadata: {e}")
 
-    def init_server(self):
+    def start_server(self):
+        """Start the master server."""
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.bind((self.master_address, self.master_port))
@@ -72,39 +77,37 @@ class MasterServer:
             print(f"Error starting Master Server: {e}")
 
     def handle_client(self, conn):
+        """Handle client requests."""
         try:
-            # Receive request from the client
             data = conn.recv(4096)
             if not data:
                 print("No data received from client.")
                 return
 
-            # Parse the client request
             request = json.loads(data.decode('utf-8'))
             request_type = request.get("type")
             file_name = request.get("file_name")
 
             if request_type == "read":
-                # Handle read request
                 print(f"Received read request for file: {file_name}")
                 chunk_server_address = self.get_chunk_server_for_file(file_name, is_write=False)
                 if chunk_server_address:
                     conn.sendall(chunk_server_address.encode())
                     print(f"Sent chunk server address to client: {chunk_server_address}")
                 else:
-                    print(f"No chunk server found for file: {file_name}")
                     conn.sendall(b"Error: File not found")
 
             elif request_type == "write":
                 print(f"Received write request for file: {file_name}")
                 chunk_server_address = self.get_chunk_server_for_file(file_name, is_write=True)
                 if chunk_server_address:
-                    response = json.dumps({"address": chunk_server_address.split(":")[0],
-                                           "port": int(chunk_server_address.split(":")[1])})
+                    response = json.dumps({
+                        "address": chunk_server_address.split(":")[0],
+                        "port": int(chunk_server_address.split(":")[1])
+                    })
                     conn.sendall(response.encode())
                     print(f"Sent primary server address to client: {chunk_server_address}")
                 else:
-                    print("No available chunk servers to assign as primary.")
                     conn.sendall(b"Error: No available chunk server for writing.")
 
         except Exception as e:
@@ -113,63 +116,52 @@ class MasterServer:
             conn.close()
 
     def get_chunk_server_for_file(self, file_name, is_write=False):
+        """Determine the appropriate chunk server for a file."""
         if is_write:
-            # Check if there's already a primary for this file
             primary_address = self.file_chunk_mapping.get(file_name)
             if not primary_address:
-                # Elect a new primary server if none exists
                 primary_server = self.select_primary_server(file_name)
                 if primary_server:
                     primary_address = f"{primary_server['address']}:{primary_server['port']}"
                     self.file_chunk_mapping[file_name] = primary_address
-                    print(f"Primary server for '{file_name}' selected: {primary_address}")
                     self.notify_primary_server(primary_server, file_name)
             return primary_address
         else:
-            # For read requests, return any available server
             return self.select_any_server(file_name)
 
-    # def select_any_server(self, file_name):
-    #     available_servers = [server for server in self.chunk_servers if self.server_status[server['name']]]
-    #     if available_servers:
-    #         least_loaded_server = min(available_servers, key=lambda server: self.server_loads[server['name']])
-    #         self.server_loads[least_loaded_server['name']] += 1
-    #         return f"{least_loaded_server['address']}:{least_loaded_server['port']}"
-    #     return None
-
-
-    def select_any_server(self, file_name):
-        # Load the metadata information from files_metadata.json
-        with open('files_metadata.json', 'r') as f:
-            files_metadata = json.load(f)
-
-        # Check if the file exists in metadata
-        if file_name not in files_metadata:
-            print(f"No metadata available for file: {file_name}")
-            return None
-
-        # Get the replica servers for the specified file
-        replicas = files_metadata[file_name]["replicas"]
-
-        # Filter the available servers that are in the replicas list and are up (server_status is True)
-        available_servers = [
-            server for server in self.chunk_servers 
-            if server['name'] in replicas and self.server_status[server['name']]
-        ]
-
-        # If there are available servers, select the least loaded one
+    def select_primary_server(self, file_name):
+        """Select a primary server for a file."""
+        available_servers = [server for server in self.chunk_servers if self.server_status[server['name']]]
         if available_servers:
             least_loaded_server = min(available_servers, key=lambda server: self.server_loads[server['name']])
-            self.server_loads[least_loaded_server['name']] += 1  # Update the load
-            return f"{least_loaded_server['address']}:{least_loaded_server['port']}"
-
-        # No available servers from the replica list
-        print("No available servers in replicas")
+            self.server_loads[least_loaded_server['name']] += 1
+            return least_loaded_server
+        print("No available servers to assign as primary.")
         return None
 
+    def select_any_server(self, file_name):
+        """Select any available server for reading a file."""
+        try:
+            with open("files_metadata.json", "r") as f:
+                files_metadata = json.load(f)
 
+            replicas = files_metadata.get(file_name, {}).get("replicas", [])
+            available_servers = [
+                server for server in self.chunk_servers
+                if server['name'] in replicas and self.server_status[server['name']]
+            ]
+
+            if available_servers:
+                least_loaded_server = min(available_servers, key=lambda server: self.server_loads[server['name']])
+                self.server_loads[least_loaded_server['name']] += 1
+                return f"{least_loaded_server['address']}:{least_loaded_server['port']}"
+        except (FileNotFoundError, json.JSONDecodeError):
+            print(f"Metadata for file {file_name} not found.")
+        print("No available replicas for the file.")
+        return None
 
     def notify_primary_server(self, primary_server, file_name):
+        """Notify a primary server about its assignment."""
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.connect((primary_server['address'], primary_server['port']))
@@ -179,37 +171,54 @@ class MasterServer:
         except Exception as e:
             print(f"Failed to notify primary server {primary_server['name']}: {e}")
 
-    # def select_any_server(self, file_name):
-    #     # Select any server to handle the read request
-    #     available_servers = [server for server in self.chunk_servers if self.server_status[server['name']]]
-    #     if available_servers:
-    #         least_loaded_server = min(available_servers, key=lambda server: self.server_loads[server['name']])
-    #         self.server_loads[least_loaded_server['name']] += 1
-    #         return f"{least_loaded_server['address']}:{least_loaded_server['port']}"
-    #     return None
-
     def start_health_check(self):
+        """Start a thread for server health checks."""
         health_check_thread = threading.Thread(target=self.check_server_health, daemon=True)
         health_check_thread.start()
 
     def check_server_health(self):
+        """Periodically check the health of chunk servers and print their statuses."""
+        print("Health check thread started.")
         while True:
+            print("\n--- Health Check Status ---")
             for server in self.chunk_servers:
                 server_name = server['name']
                 server_address = (server['address'], server['port'])
                 try:
+                    # Step 1: Establish connection to the server
                     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     s.settimeout(2)
                     s.connect(server_address)
+
+                    # Step 2: Send a ping request
+                    ping_request = json.dumps({"type": "ping"}).encode()
+                    s.sendall(ping_request)
+
+                    # Step 3: Receive the response
+                    response = s.recv(1024).decode()
+                    if response == "pong":
+                        if not self.server_status[server_name]:
+                            print(f"Server {server_name} is back online.")
+                        self.server_status[server_name] = True
+                    else:
+                        raise Exception("Invalid response")
+
                     s.close()
-                    self.server_status[server_name] = True
-                except Exception:
+
+                except Exception as e:
+                    if self.server_status[server_name]:
+                        print(f"Server {server_name} is down: {e}")
                     self.server_status[server_name] = False
-                    print(f"Server {server_name} is down.")
+
+            # Print the health status of all servers
+            for server_name, status in self.server_status.items():
+                status_str = "Healthy" if status else "Down"
+                print(f"Server {server_name}: {status_str}")
+
+            print("---------------------------\n")
             time.sleep(10)  # Check every 10 seconds
 
-def client_handler():
-    master_server = MasterServer(config_file='mserver_config.json')
+
 
 if __name__ == "__main__":
-    client_handler()
+    master_server = MasterServer(config_file='mserver_config.json')

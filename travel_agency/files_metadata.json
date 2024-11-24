@@ -1,11 +1,15 @@
 {
   "user": {
     "primary": "server1",
-    "replicas": ["server1", "server2"]
+    "replicas": ["server1", "server2", "server3", "server4", "server5"]
   },
   "hotel_packages": {
     "primary": "server3",
     "replicas": ["server1", "server3"]
+  },
+  "payment": {
+    "primary": "server2",
+    "replicas": ["server1", "server2", "server3", "server4", "server5"]
   }
 
 }

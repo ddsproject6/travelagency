@@ -29,7 +29,7 @@ def run_client():
     # while True:
     #     try:
     #         client.connect_to_master()
-    #         time.sleep(60)
+    #         time.sleep(20)
     #     except Exception as e:
     #         print(f"Error in client connection: {e}")
 
@@ -38,13 +38,6 @@ def run_client():
 # Start the client thread
 client_thread = Thread(target=run_client, daemon=True)
 client_thread.start()
-
-
-
-
-
-
-
 
 db_path = os.path.join(os.getcwd(), 'server1_files', 'test.db')
 app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{db_path}"
@@ -200,10 +193,23 @@ def signup():
     form = RegistrationForm(csrf_enabled=False)
     
     if form.validate_on_submit():
-        user = User(firstname=form.firstname.data, email=form.email.data, lastname=form.lastname.data, number=form.number.data)
-        user.set_password(form.password.data)
-        db.session.add(user)
-        db.session.commit()
+        firstname = form.firstname.data
+        email = form.email.data
+        lastname = form.lastname.data
+        number = form.number.data
+        userpassword = generate_password_hash(form.password.data)
+
+        data = {
+            "firstname": firstname,
+            "email": email,
+            "lastname": lastname,
+            "number": number,
+            "password": userpassword
+        }
+
+        client.write_file("user", data)
+
+        client.connect_to_master()
         return redirect(url_for('login'))
     return render_template('signup.html', title='Signup', form=form)   
 
@@ -224,6 +230,7 @@ def login():
     # Query for user email 
             email = form.email.data
             chunk_address = client.request_table("user")
+            print("hello")
             print(chunk_address)
             query_result = client.retrieve_table_from_chunk_server("user", chunk_address, email)
 
@@ -248,7 +255,9 @@ def login():
                 render_template('index.html',current_user=user)
                 next_page = url_for('index')
                 flash('Login Successful ')
+                client.connect_to_master()
                 return redirect(next_page) if next_page else redirect(url_for('index', _external=True, _scheme='https'))
+
                 
             else:
                 flash('Invalid Credentials!!')
@@ -485,12 +494,25 @@ def payment():
                 i+=1
 
         totl = amt1 + amt2 + amt3
-        
+        totl_str = str(totl)
+
         
         try:
-            ent=Payment(email=current_user.email,total_amount=totl,bookedpack=p,pay=current_user)
-            db.session.add(ent)
-            db.session.commit()
+
+
+            data = {
+                "email": current_user.email,
+                "total_amount": totl_str,
+                "bookedpack": p,
+                "userid": current_user.id,
+
+            }
+            client.write_file("payment", data)
+            client.connect_to_master()
+            # ent=Payment(email=current_user.email,total_amount=totl,bookedpack=p,pay=current_user)
+
+            # db.session.add(ent)
+            # db.session.commit()
 
             flash('Payment Successfully Confirmed')
             return render_template('payment.html',amt1=amt1,amt2=amt2,amt3=amt3,totl=totl)

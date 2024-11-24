@@ -63,50 +63,20 @@ class Server:
             request = json.loads(data)  # Parse JSON request
             request_type = request.get("type")
             file_name = request.get("table_name")
-            email = request.get("email") 
+            email = request.get("email")
 
-            # Handle write requests differently based on the server type
-            if request_type == "write":
+            # Step 2: Handle ping requests
+            if request_type == "ping":
+                client_socket.sendall(b"pong")
+                print(f"Ping request received and responded with pong.")
+                client_socket.close()
+                return  # Exit the method early for ping requests
+
+            # Handle write requests differently based on the server type (writes to user table)
+            if request_type == "write" and file_name == "user":
                 content = request.get("data")
                 server_type = request.get("server")  # 'primary' or 'secondary'
                 print(f"Received write request for {file_name} with content '{content}'")
-
-                # # Primary server handles write and forwards to secondary servers
-                # if server_type == "primary":
-                #     print(f"Primary server {self.server_id} handling write to {file_name} with content '{content}'")
-
-                #     # Append data to the file locally
-                #     success = self.append_to_file(file_name, content)
-
-                #     if success:
-                #         # Deduce secondaries by excluding the current server from the replicas
-                #         secondaries = self.get_secondaries(file_name)
-                #         print(f"Secondaries for {file_name}: {secondaries}")
-
-                #         # Forward the write to secondaries
-                #         secondary_status = []
-                #         for secondary_address in secondaries:
-                #             try:
-                #                 sec_host, sec_port = secondary_address
-                #                 secondary_status.append(self.forward_to_secondary(sec_host, sec_port, file_name, content))
-                #             except Exception as e:
-                #                 print(f"Error forwarding to secondary {secondary_address}: {e}")
-                #                 secondary_status.append(False)
-
-                #         # Verify if all secondaries succeeded
-                #         if all(secondary_status):
-                #             client_socket.sendall(b"Write success")
-                #             print("Write committed successfully to primary and all secondaries")
-                #         else:
-                #             # Rollback if any secondary fails
-                #             self.rollback_file(file_name)
-                #             for sec_addr in secondaries:
-                #                 self.rollback_secondary(sec_addr, file_name)
-                #             client_socket.sendall(b"Write failed")
-                #             print("Write failed; rolled back changes")
-                #     else:
-                #         client_socket.sendall(b"Write failed")
-                #         print("Write failed locally")
 
                 if server_type == "primary":
                     print(f"Primary server {self.server_id} handling write to {file_name} with content '{content}'")
@@ -158,65 +128,67 @@ class Server:
                         client_socket.sendall(b"Write failed")
                         print(f"Write failed on secondary server {self.server_id}")
 
-            # Handle read requests (not server_type dependent)
-            # if request_type == "read":
-            #     print(f"Client requested to read: {file_name}")
-            #     if file_name in self.files and os.path.exists(self.files[file_name]):
-            #         # Open and send the file contents in chunks
-            #         try:
-            #             with open(self.files[file_name], 'rb') as f:
-            #                 while chunk := f.read(4096):
-            #                     client_socket.sendall(chunk)
-            #             print(f"Sent file {file_name} to client")
-            #         except Exception as e:
-            #             print(f"Error reading file {file_name}: {e}")
-            #             client_socket.sendall(f"Error: Could not read file {file_name}".encode())
-            #     else:
-            #         error_message = f"Error: File {file_name} not found on server."
-            #         print(error_message)
-            #         client_socket.sendall(error_message.encode())
+
+            # Handle write requests differently based on the server type
+            if request_type == "write" and file_name == "payment":
+                content = request.get("data")
+                server_type = request.get("server")  # 'primary' or 'secondary'
+                print(f"Received write request for {file_name} with content '{content}'")
+
+                if server_type == "primary":
+                    print(f"Primary server {self.server_id} handling write to {file_name} with content '{content}'")
+
+                    # Append data to the database table locally with manual commit
+                    success = self.append_to_table_payment(file_name, content)
+                    print(success)
 
 
-            # if request_type == "read":
-            #     print(f"Client requested to read table: {file_name}")
-                
-            #     # Check if the file path exists and is in the server's files
-            #     if file_name in self.files and os.path.exists(self.files[file_name]):
-            #         # Database file path
-            #         db_file_path = self.files[file_name]
-                    
-            #         try:
-            #             # Create an SQLAlchemy engine to connect to the SQLite database
-            #             engine = create_engine(f'sqlite:///{db_file_path}')
-            #             connection = engine.connect()
-            #             metadata = MetaData()
+                    if success:
+                        # Deduce secondaries by excluding the current server from the replicas
+                        secondaries = self.get_secondaries(file_name)
+                        print(f"Secondaries for {file_name}: {secondaries}")
 
-            #             # Reflect the table (assuming the table name is the same as `file_name`)
-            #             table = Table(file_name, metadata, autoload_with=engine)
+                        # Forward the write to secondaries
+                        secondary_status = []
+                        for secondary_address in secondaries:
+                            try:
+                                sec_host, sec_port = secondary_address
+                                secondary_status.append(self.forward_to_secondary(sec_host, sec_port, file_name, content))
+                            except Exception as e:
+                                print(f"Error forwarding to secondary {secondary_address}: {e}")
+                                secondary_status.append(False)
 
-            #             # Perform a SELECT * query
-            #             query = select([table])
-            #             result = connection.execute(query)
+                        # Verify if all secondaries succeeded
+                        if all(secondary_status):
+                            client_socket.sendall(b"Write success")
+                            print("Write committed successfully to primary and all secondaries")
+                        else:
+                            # Rollback if any secondary fails
+                            self.rollback_file(file_name)
+                            for sec_addr in secondaries:
+                                self.rollback_secondary(sec_addr, file_name)
+                            client_socket.sendall(b"Write failed")
+                            print("Write failed; rolled back changes")
+                    else:
+                        client_socket.sendall(b"Write failed")
+                        print("Write failed locally")
 
-            #             # Send the result rows to the client
-            #             for row in result:
-            #                 # Convert each row to a string and send to the client
-            #                 client_socket.sendall(f"{row}\n".encode())
-                        
-            #             print(f"Sent table {file_name} content to client")
 
-            #         except Exception as e:
-            #             print(f"Error accessing table {file_name}: {e}")
-            #             client_socket.sendall(f"Error: Could not read table {file_name}".encode())
 
-            #         finally:
-            #             # Close the connection
-            #             connection.close()
 
-            #     else:
-            #         error_message = f"Error: Database file {file_name}.db not found on server."
-            #         print(error_message)
-            #         client_socket.sendall(error_message.encode())
+
+                # Secondary server forwards the write to its file (it does not initiate writes)
+                elif server_type == "secondary":
+                    print(f"Secondary server {self.server_id} received write request for {file_name} with content '{content}'")
+                    success = self.append_to_table_payment(file_name, content)
+                    if success:
+                        client_socket.sendall(b"Write success")
+                        print(f"Write successful on secondary server {self.server_id}")
+                    else:
+                        client_socket.sendall(b"Write failed")
+                        print(f"Write failed on secondary server {self.server_id}")
+
+
 
             if request_type == "read":
                 print(f"Client requested to read table: {file_name}")
@@ -254,7 +226,7 @@ class Server:
                     error_message = f"Error: Database file {file_name}. not found on server."
                     print(error_message)
                     client_socket.sendall(error_message.encode())
-
+            #reads user table
             if request_type == "readuser":
                 print(f"Client requested to read table: {file_name}")
                 
@@ -292,11 +264,7 @@ class Server:
                                 # If no result is found, send a message indicating that
                                 error_message = json.dumps({"error": f"No data found for email: {email}"})
                                 client_socket.sendall(f"{error_message}\n".encode())
-                            # # Step 4: Fetch and send the results to the client
-                            # for row in result:
-                            #     # Convert each row to a string and send it to the client
-                            #     row_data = ", ".join([str(value) for value in row])  # Join row data as a string
-                            #     client_socket.sendall(f"{row_data}\n".encode())
+
                             
                             print(f"Sent table {file_name} content to client")
                     
@@ -325,17 +293,57 @@ class Server:
             client_socket.close()
 
 
-    # def append_to_file(self, file_name, content):
-    #     try:
-    #         file_path = os.path.join(f"{self.server_id}_files", file_name)
-    #         # Open the file in append mode
-    #         with open(file_path, 'a') as f:
-    #             f.write(content)
-    #         print(f"Write successful on {file_name}")
-    #         return True
-    #     except Exception as e:
-    #         print(f"Error writing to {file_name}: {e}")
-    #         return False
+    def append_to_table_payment(self, file_name, content):
+        """
+        Insert data into the SQLite database file using raw SQL.
+        The table name is derived from `file_name`, and the DB file path is retrieved from `self.files[file_name]`.
+        """
+        # Get the database file path from self.files
+        db_file_path = self.files[file_name]
+
+        # Connect to the database using SQLAlchemy's create_engine
+        engine = create_engine(f"sqlite:///{db_file_path}")
+
+        # Extract data from content 
+
+        email = content.get("email")
+        total_amount = content.get("total_amount")
+        bookedpack = content.get("bookedpack")
+        userid = content.get("userid")
+
+        # Create the raw SQL insert statement without the `id` field for auto-increment
+        sql = f"""
+        INSERT INTO {file_name} (email, total_amount, bookedpack, userid)
+        VALUES (:email, :total_amount, :bookedpack, :userid)
+        """
+
+
+        try:
+            # Connect to the database
+            connection = engine.connect()
+
+            # Begin a transaction
+            transaction = connection.begin()
+
+            # Execute the SQL insert
+            connection.execute(text(sql), {"email": email, "total_amount": total_amount, "bookedpack": bookedpack, "userid": userid})
+
+            # Commit the transaction manually
+            transaction.commit()
+            print(f"Data successfully inserted into the table '{file_name}' in the database '{db_file_path}'")
+            return True
+        except Exception as e:
+            # Rollback the transaction if an error occurs
+            if transaction:
+                transaction.rollback()
+            print(f"Error inserting data into the table '{file_name}' in the database '{db_file_path}': {e}")
+            return False
+        finally:
+            # Close the connection
+            if connection:
+                connection.close()
+
+
     def append_to_file(self, file_name, content):
         """
         Insert data into the SQLite database file using raw SQL.
@@ -349,26 +357,18 @@ class Server:
         engine = create_engine(f"sqlite:///{db_file_path}")
 
         # Extract data from content (which is assumed to be a dictionary)
-        id_value = content.get("id")  # This will be None if it's auto-incremented
-        name = content.get("name")
+        name = content.get("firstname") 
+        lastname = content.get("lastname")
         email = content.get("email")
-        age = content.get("age")
+        number = content.get("number")
+        password_hash = content.get("password")
 
         # Create the raw SQL insert statement without the `id` field for auto-increment
         sql = f"""
-        INSERT INTO {file_name} (name, email, age)
-        VALUES (:name, :email, :age)
+        INSERT INTO {file_name} (firstname, lastname, email, number, password_hash)
+        VALUES (:name, :lastname, :email, :number, :password_hash)
         """
 
-        # If `id` is provided, modify the query to include it
-        if id_value:
-            sql = f"""
-            INSERT INTO {file_name} (id, name, email, age)
-            VALUES (:id, :name, :email, :age)
-            """
-
-        connection = None
-        transaction = None
 
         try:
             # Connect to the database
@@ -378,7 +378,7 @@ class Server:
             transaction = connection.begin()
 
             # Execute the SQL insert
-            connection.execute(text(sql), {"id": id_value, "name": name, "email": email, "age": age})
+            connection.execute(text(sql), {"name": name, "lastname":lastname, "email": email, "number": number, "password_hash": password_hash})
 
             # Commit the transaction manually
             transaction.commit()
@@ -433,7 +433,7 @@ class Server:
                 sec_sock.connect((host, port))
                 write_data = {
                     "type": "write",
-                    "file_name": file_name,
+                    "table_name": file_name,
                     "data": content,
                     "server": "secondary"
                 }
